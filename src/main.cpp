@@ -95,6 +95,14 @@ void messageReceived(String &topic, String &payload) {
     cmdStr = payload.c_str();
 }
 
+enum class SwitchState {
+    ON,
+    ON_TO_OFF,
+    OFF_TO_ON,
+    OFF
+};
+SwitchState sState = SwitchState::ON;
+
 void setup() {
     Serial.begin(115200);
 
@@ -112,7 +120,12 @@ void setup() {
     pinMode(D_pin, INPUT_PULLDOWN);
     attachInterrupt(D_pin, on_D, RISING);
     pinMode(switch_pin, INPUT_PULLUP);
-    attachInterrupt(switch_pin, on_key, CHANGE);
+
+    if (digitalRead(switch_pin)) {
+        sState = SwitchState::ON;
+    } else {
+        sState = SwitchState::OFF;
+    }
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -125,11 +138,17 @@ void setup() {
     digitalWrite(remote_enable_pin, LOW);
     delay(500);
     digitalWrite(remote_enable_pin, HIGH);
+
 }
 
-unsigned long lastMillis = 0;
+using timer_t = unsigned long;
+
+timer_t lastMillis = 0;
 int servoStatus = 0;
 int dcStatus = 0;
+
+timer_t tstart = 0; // for debouncing switch signal
+const timer_t SWITCH_DEBOUNCE_TIME = 500;
 
 void loop() {
     if (!client.connected()) {   
@@ -164,6 +183,45 @@ void loop() {
         Serial.print("Getting keypress: "); Serial.println(keyCmd.c_str());
         publish("/coordinator_keypress", keyCmd);
         keyCmd = "";
+    }
+
+    int switchval = digitalRead(switch_pin);
+    timer_t tnow = millis();
+    switch (sState) {
+        case SwitchState::OFF: {
+            if (switchval == HIGH) {
+                sState = SwitchState::OFF_TO_ON;
+                tstart = tnow;
+            }
+        }
+        break;
+        case SwitchState::OFF_TO_ON: {
+            if (switchval == LOW) {
+                sState = SwitchState::OFF;
+                Serial.println("Ignoring fake off to on");
+            } else if (tnow - tstart > SWITCH_DEBOUNCE_TIME) {
+                sState = SwitchState::ON;
+                publish("/coordinator_keypress", "E");
+            }
+        }
+        break;
+        case SwitchState::ON_TO_OFF: {
+            if (switchval == HIGH) {
+                sState = SwitchState::ON;
+                Serial.println("Ignoring fake on to off");
+            } else if (tnow - tstart > SWITCH_DEBOUNCE_TIME) {
+                sState = SwitchState::OFF;
+                publish("/coordinator_keypress", "E");
+            }
+        }
+        break;
+        case SwitchState::ON: {
+            if (switchval == LOW) {
+                sState = SwitchState::ON_TO_OFF;
+                tstart = tnow;
+            }
+        }
+        break;
     }
 
     auto millisNow = millis();
