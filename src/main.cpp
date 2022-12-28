@@ -70,9 +70,14 @@ void subscribe(const std::string& topic) {
 
 void connect() {
     Serial.print("checking wifi...");
+    size_t numTries = 0;
     while (WiFi.status() != WL_CONNECTED) {
         Serial.print(".");
         delay(1000);
+        if (numTries > 20) {
+            ESP.restart();
+        }
+        numTries++;
     }
     Serial.println("\nconnected! Local IP: ");
     Serial.print(WiFi.localIP());
